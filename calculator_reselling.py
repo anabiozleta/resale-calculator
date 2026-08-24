@@ -23,20 +23,23 @@ class App(ctk.CTk):
     """Главное окно калькулятора."""
 
     HISTORY_LIMIT = 5
-    ACCENT = "#1f538d"
-    ACCENT_HOVER = "#173f6b"
-    BG = "#111827"
-    CARD = "#1f2937"
-    TEXT = "#f3f4f6"
-    MUTED = "#aeb8c7"
+    ACCENT = "#3b82f6"
+    ACCENT_HOVER = "#2563eb"
+    PROFIT = "#38d996"
+    BG = "#080a0e"
+    CARD = "#0e1117"
+    CARD_ALT = "#121720"
+    BORDER = "#252b36"
+    TEXT = "#f5f7fa"
+    MUTED = "#8993a4"
     ERROR = "#d64545"
 
     FIELDS = (
-        ("purchase", "💰  Цена покупки (₽)", ""),
-        ("sale", "🏷  Цена продажи (₽)", ""),
-        ("repair", "🛠  Расходы на ремонт (₽)", "0"),
-        ("commission", "📊  Комиссия (%)", "0"),
-        ("extra", "➕  Дополнительные расходы (₽)", "0"),
+        ("purchase", "Цена покупки, ₽", ""),
+        ("sale", "Цена продажи, ₽", ""),
+        ("repair", "Ремонт, ₽", "0"),
+        ("commission", "Комиссия, %", "0"),
+        ("extra", "Другие расходы, ₽", "0"),
     )
 
     def __init__(self):
@@ -45,8 +48,8 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title("Калькулятор перекупства")
-        self.geometry("1060x760")
-        self.minsize(900, 680)
+        self.geometry("1220x760")
+        self.minsize(980, 680)
         self.configure(fg_color=self.BG)
 
         # История хранится рядом с программой.
@@ -80,7 +83,7 @@ class App(ctk.CTk):
         )
         style.configure(
             "History.Treeview.Heading",
-            background="#374151",
+            background=self.CARD_ALT,
             foreground=self.TEXT,
             relief="flat",
             font=("Segoe UI Semibold", 10),
@@ -89,12 +92,12 @@ class App(ctk.CTk):
 
     def _shadow_card(self, parent, row, column, **grid_options):
         """Создаёт карточку с простой имитацией мягкой тени."""
-        wrapper = ctk.CTkFrame(parent, fg_color="#080d16", corner_radius=14)
+        wrapper = ctk.CTkFrame(parent, fg_color=self.BORDER, corner_radius=12)
         wrapper.grid(row=row, column=column, **grid_options)
         wrapper.grid_rowconfigure(0, weight=1)
         wrapper.grid_columnconfigure(0, weight=1)
-        card = ctk.CTkFrame(wrapper, fg_color=self.CARD, corner_radius=12)
-        card.grid(row=0, column=0, sticky="nsew", padx=(0, 3), pady=(0, 3))
+        card = ctk.CTkFrame(wrapper, fg_color=self.CARD, corner_radius=11)
+        card.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
         return card
 
     def _build_interface(self):
@@ -103,25 +106,25 @@ class App(ctk.CTk):
         self.grid_rowconfigure(1, weight=1)
 
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=30, pady=(24, 14))
+        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 14))
         header.grid_columnconfigure(0, weight=1)
         title_box = ctk.CTkFrame(header, fg_color="transparent")
         title_box.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(
             title_box,
-            text="Калькулятор перекупства",
+            text="Калькулятор сделок",
             text_color=self.TEXT,
-            font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=30, weight="bold"),
         ).pack(anchor="w")
         ctk.CTkLabel(
             title_box,
-            text="Оцените прибыльность сделки и следите за ценами маркетплейса",
+            text="Планируйте покупку, продажу и контролируйте доходность",
             text_color=self.MUTED,
             font=ctk.CTkFont(family="Segoe UI", size=13),
         ).pack(anchor="w", pady=(3, 0))
         ctk.CTkButton(
             header,
-            text="📊  Мониторинг цен",
+            text="Мониторинг рынка  ↗",
             width=180,
             height=40,
             fg_color=self.ACCENT,
@@ -131,22 +134,28 @@ class App(ctk.CTk):
         ).grid(row=0, column=1, sticky="e", padx=(20, 0))
 
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew", padx=30, pady=(0, 20))
-        content.grid_columnconfigure(0, weight=5, uniform="main")
+        content.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 24))
+        content.grid_columnconfigure(0, weight=7, uniform="main")
         content.grid_columnconfigure(1, weight=4, uniform="main")
         content.grid_rowconfigure(0, weight=1)
 
+        workspace = ctk.CTkFrame(content, fg_color="transparent")
+        workspace.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        workspace.grid_columnconfigure(0, weight=1)
+        workspace.grid_rowconfigure(0, weight=4)
+        workspace.grid_rowconfigure(1, weight=2)
+
         input_card = self._shadow_card(
-            content, 0, 0, sticky="nsew", padx=(0, 10), pady=(0, 12)
+            workspace, 0, 0, sticky="nsew", pady=(0, 8)
         )
         result_card = self._shadow_card(
-            content, 0, 1, sticky="nsew", padx=(10, 0), pady=(0, 12)
+            workspace, 1, 0, sticky="nsew", pady=(8, 0)
         )
         self._build_input_card(input_card)
         self._build_result_card(result_card)
 
         history_card = self._shadow_card(
-            self, 2, 0, sticky="ew", padx=30, pady=(0, 28)
+            content, 0, 1, sticky="nsew", padx=(8, 0)
         )
         self._build_history_card(history_card)
 
@@ -155,7 +164,7 @@ class App(ctk.CTk):
         card.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(
             card,
-            text="Параметры сделки",
+            text="Новая сделка",
             text_color=self.TEXT,
             font=ctk.CTkFont(family="Segoe UI", size=19, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 8))
@@ -164,25 +173,34 @@ class App(ctk.CTk):
         fields_frame = ctk.CTkScrollableFrame(
             card,
             fg_color="transparent",
-            scrollbar_button_color="#4b5563",
+            scrollbar_button_color=self.BORDER,
             scrollbar_button_hover_color=self.ACCENT,
         )
         fields_frame.grid(row=1, column=0, sticky="nsew", padx=(8, 5), pady=(0, 10))
-        fields_frame.grid_columnconfigure(0, weight=1)
+        fields_frame.grid_columnconfigure(0, weight=1, uniform="fields")
+        fields_frame.grid_columnconfigure(1, weight=1, uniform="fields")
 
-        for row, (key, label, default) in enumerate(self.FIELDS, start=1):
+        for index, (key, label, default) in enumerate(self.FIELDS):
+            column = index % 2
+            field_row = (index // 2) * 2
             ctk.CTkLabel(
                 fields_frame, text=label, text_color=self.TEXT, font=("Segoe UI", 12)
-            ).grid(row=row * 2 - 1, column=0, sticky="w", padx=16, pady=(5, 2))
+            ).grid(
+                row=field_row, column=column, sticky="w",
+                padx=(16 if column == 0 else 8, 16), pady=(7, 3),
+            )
             entry = ctk.CTkEntry(
                 fields_frame,
-                height=35,
-                fg_color="#111827",
-                border_color="#4b5563",
+                height=39,
+                fg_color=self.CARD_ALT,
+                border_color=self.BORDER,
                 text_color=self.TEXT,
-                placeholder_text="Введите значение",
+                placeholder_text="0",
             )
-            entry.grid(row=row * 2, column=0, sticky="ew", padx=16, pady=(0, 5))
+            entry.grid(
+                row=field_row + 1, column=column, sticky="ew",
+                padx=(16 if column == 0 else 8, 16), pady=(0, 6),
+            )
             if default:
                 entry.insert(0, default)
             entry.bind("<Return>", lambda _event: self.calculate())
@@ -197,97 +215,105 @@ class App(ctk.CTk):
             hover_color=self.ACCENT_HOVER,
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
             command=self.calculate,
-        ).grid(row=12, column=0, sticky="ew", padx=16, pady=(17, 16))
+        ).grid(row=7, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 14))
 
     def _build_result_card(self, card):
-        card.grid_columnconfigure(0, weight=1)
+        for column in range(4):
+            card.grid_columnconfigure(column, weight=1, uniform="stats")
         ctk.CTkLabel(
             card,
-            text="Результаты",
+            text="Итог сделки",
             text_color=self.TEXT,
-            font=ctk.CTkFont(family="Segoe UI", size=19, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 14))
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=20, pady=(16, 10))
 
         items = (
-            ("expenses", "Общие расходы", "💳"),
-            ("profit", "Чистая прибыль", "💰"),
-            ("margin", "Маржинальность", "📈"),
-            ("roi", "ROI", "🎯"),
+            ("expenses", "РАСХОДЫ", self.TEXT),
+            ("profit", "ЧИСТАЯ ПРИБЫЛЬ", self.PROFIT),
+            ("margin", "МАРЖА", self.ACCENT),
+            ("roi", "ROI", self.PROFIT),
         )
-        for row, (key, label, icon) in enumerate(items, start=1):
-            box = ctk.CTkFrame(card, fg_color="#111827", corner_radius=10)
-            box.grid(row=row, column=0, sticky="ew", padx=24, pady=7)
+        for column, (key, label, color) in enumerate(items):
+            box = ctk.CTkFrame(
+                card, fg_color=self.CARD_ALT, corner_radius=8,
+                border_width=1, border_color=self.BORDER,
+            )
+            box.grid(
+                row=1, column=column, sticky="nsew",
+                padx=(20 if column == 0 else 5, 20 if column == 3 else 5), pady=0,
+            )
             box.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(
-                box, text=f"{icon}  {label}", text_color=self.MUTED, font=("Segoe UI", 12)
-            ).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 0))
+                box, text=label, text_color=self.MUTED,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            ).grid(row=0, column=0, sticky="w", padx=13, pady=(11, 1))
             ctk.CTkLabel(
                 box,
                 textvariable=self.result_vars[key],
-                text_color=self.ACCENT,
-                font=ctk.CTkFont(family="Segoe UI", size=23, weight="bold"),
-            ).grid(row=1, column=0, sticky="w", padx=16, pady=(1, 12))
+                text_color=color,
+                font=ctk.CTkFont(family="Segoe UI", size=19, weight="bold"),
+            ).grid(row=1, column=0, sticky="w", padx=13, pady=(1, 12))
 
         ctk.CTkLabel(
             card,
-            text="Комиссия рассчитывается\nот цены продажи.",
-            justify="left",
+            text="Комиссия считается от цены продажи",
             text_color=self.MUTED,
-            font=("Segoe UI", 11),
-        ).grid(row=5, column=0, sticky="sw", padx=24, pady=(18, 20))
+            font=("Segoe UI", 10),
+        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=20, pady=(12, 14))
 
         ctk.CTkButton(
             card,
-            text="Сбросить результат",
-            height=38,
+            text="Сбросить",
+            width=100,
+            height=30,
             fg_color="transparent",
-            hover_color="#374151",
+            hover_color=self.CARD_ALT,
             border_width=1,
-            border_color="#596579",
+            border_color=self.BORDER,
             text_color=self.MUTED,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             command=self.reset_results,
-        ).grid(row=6, column=0, sticky="ew", padx=24, pady=(0, 22))
+        ).grid(row=2, column=3, sticky="e", padx=20, pady=(10, 12))
 
     def _build_history_card(self, card):
         card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
         title_row = ctk.CTkFrame(card, fg_color="transparent")
         title_row.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 8))
         ctk.CTkLabel(
             title_row,
-            text="Последние расчёты",
+            text="История сделок",
             text_color=self.TEXT,
             font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
         ).pack(side="left")
         ctk.CTkButton(
             title_row,
-            text="Очистить историю",
-            width=140,
+            text="Очистить",
+            width=85,
             height=30,
             fg_color="transparent",
-            hover_color="#374151",
+            hover_color=self.CARD_ALT,
             border_width=1,
-            border_color="#596579",
+            border_color=self.BORDER,
             text_color=self.MUTED,
             command=self.clear_history,
         ).pack(side="right")
 
-        columns = ("time", "purchase", "sale", "profit", "roi")
+        columns = ("time", "deal", "profit", "roi")
         self.history_table = ttk.Treeview(
-            card, columns=columns, show="headings", height=5, style="History.Treeview"
+            card, columns=columns, show="headings", height=12, style="History.Treeview"
         )
         headings = {
-            "time": "Дата и время",
-            "purchase": "Покупка",
-            "sale": "Продажа",
+            "time": "Дата",
+            "deal": "Покупка → продажа",
             "profit": "Прибыль",
             "roi": "ROI",
         }
-        widths = {"time": 145, "purchase": 145, "sale": 145, "profit": 145, "roi": 95}
+        widths = {"time": 110, "deal": 175, "profit": 115, "roi": 70}
         for column in columns:
             self.history_table.heading(column, text=headings[column])
             self.history_table.column(column, width=widths[column], anchor="center")
-        self.history_table.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 18))
+        self.history_table.grid(row=1, column=0, sticky="nsew", padx=16, pady=(4, 16))
 
     @staticmethod
     def _parse_number(value):
@@ -299,7 +325,7 @@ class App(ctk.CTk):
         return number
 
     def _reset_entry(self, entry):
-        entry.configure(border_color="#4b5563")
+        entry.configure(border_color=self.BORDER)
 
     def reset_results(self):
         """Очищает рассчитанные показатели, не затрагивая историю."""
@@ -427,8 +453,10 @@ class App(ctk.CTk):
                     "end",
                     values=(
                         record["time"],
-                        self._format_money(float(record["purchase"])),
-                        self._format_money(float(record["sale"])),
+                        "{} → {}".format(
+                            self._format_money(float(record["purchase"])),
+                            self._format_money(float(record["sale"])),
+                        ),
                         self._format_money(float(record["profit"])),
                         f'{float(record["roi"]):,.2f} %'.replace(",", " "),
                     ),
