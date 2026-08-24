@@ -22,7 +22,7 @@ APP_DIR = (
 class App(ctk.CTk):
     """Главное окно калькулятора."""
 
-    HISTORY_LIMIT = 5
+    HISTORY_LIMIT = 100
     ACCENT = "#3b82f6"
     ACCENT_HOVER = "#2563eb"
     PROFIT = "#38d996"
@@ -54,7 +54,18 @@ class App(ctk.CTk):
 
         # История хранится рядом с программой.
         self.history_path = os.path.join(APP_DIR, "calculation_history.json")
+        self.lots_path = os.path.join(APP_DIR, "active_lots.json")
+        self.settings_path = os.path.join(APP_DIR, "app_settings.json")
+        self.settings = self._load_settings()
+        self.default_commission = float(self.settings.get("commission", 0))
         self.entries = {}
+        self.active_lots = self._load_lots()
+        self.selected_lot_id = None
+        self.dashboard_vars = {
+            "profit": ctk.StringVar(value="0 ₽"),
+            "roi": ctk.StringVar(value="0.00 %"),
+            "turnover": ctk.StringVar(value="0 ₽"),
+        }
         self.result_vars = {
             "expenses": ctk.StringVar(value="—"),
             "profit": ctk.StringVar(value="—"),
@@ -66,7 +77,8 @@ class App(ctk.CTk):
         self._configure_styles()
         self._build_interface()
         self._refresh_history_table()
-        self._restore_last_result()
+        self._refresh_active_lots()
+        self._update_dashboard_totals()
 
     def _configure_styles(self):
         """Настраивает внешний вид стандартной таблицы ttk."""
@@ -102,10 +114,72 @@ class App(ctk.CTk):
 
     def _build_interface(self):
         """Собирает все элементы главного окна."""
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=0, minsize=205)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        header = ctk.CTkFrame(self, fg_color="transparent")
+        sidebar = ctk.CTkFrame(
+            self, width=205, corner_radius=0, fg_color="#0b0e13",
+            border_width=0,
+        )
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        ctk.CTkLabel(
+            sidebar,
+            text="FLIP\nDESK",
+            justify="left",
+            text_color=self.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+        ).pack(anchor="w", padx=22, pady=(26, 34))
+
+        self.nav_buttons = {}
+        def create_nav_button(key, label, symbol):
+            button = ctk.CTkButton(
+                sidebar,
+                text=f"{symbol}   {label}",
+                anchor="w",
+                width=165,
+                height=43,
+                corner_radius=8,
+                fg_color="transparent",
+                hover_color=self.CARD_ALT,
+                text_color=self.MUTED,
+                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                command=lambda page=key: self.show_view(page),
+            )
+            self.nav_buttons[key] = button
+            return button
+
+        for key, label, symbol in (
+            ("resale", "Перепродажа", "↗"),
+            ("prices", "Прайс-лист", "≡"),
+            ("rental", "Аренда авто", "◇"),
+        ):
+            create_nav_button(key, label, symbol).pack(padx=20, pady=4)
+
+        ctk.CTkLabel(
+            sidebar,
+            text="Локальные данные\nбез облачного хранения",
+            justify="left",
+            text_color="#586273",
+            font=("Segoe UI", 10),
+        ).pack(side="bottom", anchor="w", padx=22, pady=22)
+
+        create_nav_button("settings", "Настройки", "⚙").pack(
+            side="bottom", padx=20, pady=(4, 0)
+        )
+
+        self.view_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.view_container.grid(row=0, column=1, sticky="nsew")
+        self.view_container.grid_columnconfigure(0, weight=1)
+        self.view_container.grid_rowconfigure(0, weight=1)
+
+        self.resale_view = ctk.CTkFrame(self.view_container, fg_color="transparent")
+        self.resale_view.grid(row=0, column=0, sticky="nsew")
+        self.resale_view.grid_columnconfigure(0, weight=1)
+        self.resale_view.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self.resale_view, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 14))
         header.grid_columnconfigure(0, weight=1)
         title_box = ctk.CTkFrame(header, fg_color="transparent")
@@ -122,42 +196,333 @@ class App(ctk.CTk):
             text_color=self.MUTED,
             font=ctk.CTkFont(family="Segoe UI", size=13),
         ).pack(anchor="w", pady=(3, 0))
+
+        content = ctk.CTkFrame(self.resale_view, fg_color="transparent")
+        content.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 24))
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(1, weight=3)
+        content.grid_rowconfigure(2, weight=2)
+
+        stats_card = self._shadow_card(content, 0, 0, sticky="ew", pady=(0, 8))
+        self._build_dashboard_stats(stats_card)
+
+        work_area = ctk.CTkFrame(content, fg_color="transparent")
+        work_area.grid(row=1, column=0, sticky="nsew", pady=8)
+        work_area.grid_columnconfigure(0, weight=5, uniform="lots")
+        work_area.grid_columnconfigure(1, weight=6, uniform="lots")
+        work_area.grid_rowconfigure(0, weight=1)
+
+        creator_card = self._shadow_card(
+            work_area, 0, 0, sticky="nsew", padx=(0, 8)
+        )
+        active_card = self._shadow_card(
+            work_area, 0, 1, sticky="nsew", padx=(8, 0)
+        )
+        self._build_lot_creator(creator_card)
+        self._build_active_lots(active_card)
+
+        log_card = self._shadow_card(content, 2, 0, sticky="nsew", pady=(8, 0))
+        self._build_sales_log(log_card)
+
+        self.price_view = PriceMonitorFrame(self.view_container, self)
+        self.price_view.grid(row=0, column=0, sticky="nsew")
+        self.rental_view = RentalFrame(self.view_container, self)
+        self.rental_view.grid(row=0, column=0, sticky="nsew")
+        self.settings_view = self._build_settings_view(self.view_container)
+        self.settings_view.grid(row=0, column=0, sticky="nsew")
+        self.show_view("resale")
+
+    def show_view(self, name):
+        """Переключает основной раздел через левое меню."""
+        if name == "prices":
+            self.price_view.tkraise()
+        elif name == "rental":
+            self.rental_view.tkraise()
+        elif name == "settings":
+            self.settings_view.tkraise()
+        else:
+            self.resale_view.tkraise()
+            name = "resale"
+        for key, button in self.nav_buttons.items():
+            active = key == name
+            button.configure(
+                fg_color=self.CARD_ALT if active else "transparent",
+                text_color=self.TEXT if active else self.MUTED,
+                border_width=1 if active else 0,
+                border_color=self.BORDER,
+            )
+
+    def _build_dashboard_stats(self, card):
+        """Создаёт сводку по завершённым продажам."""
+        for column in range(3):
+            card.grid_columnconfigure(column, weight=1, uniform="dashboard")
+        items = (
+            ("profit", "ЧИСТЫЙ ДОХОД", self.PROFIT),
+            ("roi", "ДОХОДНОСТЬ (ROI)", self.ACCENT),
+            ("turnover", "ОБОРОТ", self.TEXT),
+        )
+        for column, (key, label, color) in enumerate(items):
+            box = ctk.CTkFrame(card, fg_color="transparent")
+            box.grid(row=0, column=column, sticky="ew", padx=20, pady=15)
+            ctk.CTkLabel(
+                box, text=label, text_color=self.MUTED,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                box, textvariable=self.dashboard_vars[key], text_color=color,
+                font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+            ).pack(anchor="w", pady=(2, 0))
+
+    def _build_lot_creator(self, card):
+        """Создаёт форму добавления предмета в активные лоты."""
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="Добавление предмета", text_color=self.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(18, 5))
+        ctk.CTkLabel(
+            card,
+            text="Создайте лот — продажу можно оформить позже в правой колонке.",
+            text_color=self.MUTED, font=("Segoe UI", 10),
+        ).grid(row=1, column=0, sticky="w", padx=20, pady=(0, 15))
+
+        self.lot_name_entry = ctk.CTkEntry(
+            card, height=40, placeholder_text="Название предмета",
+            fg_color=self.CARD_ALT, border_color=self.BORDER,
+        )
+        self.lot_name_entry.grid(row=2, column=0, sticky="ew", padx=20, pady=5)
+        self.lot_purchase_entry = ctk.CTkEntry(
+            card, height=40, placeholder_text="Сумма покупки, ₽",
+            fg_color=self.CARD_ALT, border_color=self.BORDER,
+        )
+        self.lot_purchase_entry.grid(row=3, column=0, sticky="ew", padx=20, pady=5)
+        self.lot_purchase_entry.bind("<Return>", lambda _event: self.add_lot())
         ctk.CTkButton(
+            card, text="Добавить лот", height=42,
+            fg_color=self.ACCENT, hover_color=self.ACCENT_HOVER,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            command=self.add_lot,
+        ).grid(row=4, column=0, sticky="ew", padx=20, pady=(14, 10))
+        self.direct_sale_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            card,
+            text="Прямая продажа — без комиссии",
+            variable=self.direct_sale_var,
+            fg_color=self.PROFIT,
+            hover_color="#24b879",
+            border_color=self.BORDER,
+            text_color=self.MUTED,
+            font=("Segoe UI", 11),
+        ).grid(row=5, column=0, sticky="w", padx=20, pady=(0, 20))
+
+    def _build_active_lots(self, card):
+        """Создаёт список непроданных лотов и панель оформления продажи."""
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
+        title_row = ctk.CTkFrame(card, fg_color="transparent")
+        title_row.grid(row=0, column=0, sticky="ew", padx=18, pady=(15, 8))
+        ctk.CTkLabel(
+            title_row, text="Активные лоты", text_color=self.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).pack(side="left")
+        self.lots_count_var = ctk.StringVar(value="0 предметов")
+        ctk.CTkLabel(
+            title_row, textvariable=self.lots_count_var, text_color=self.MUTED,
+            font=("Segoe UI", 10),
+        ).pack(side="right")
+
+        self.active_lots_frame = ctk.CTkScrollableFrame(
+            card, fg_color="transparent", scrollbar_button_color=self.BORDER,
+            scrollbar_button_hover_color=self.ACCENT,
+        )
+        self.active_lots_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=0)
+        self.active_lots_frame.grid_columnconfigure(0, weight=1)
+
+        self.sale_panel = ctk.CTkFrame(
+            card, fg_color=self.CARD_ALT, corner_radius=8,
+            border_width=1, border_color=self.BORDER,
+        )
+        self.sale_panel.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 16))
+        self.sale_panel.grid_columnconfigure(0, weight=1)
+        self.selected_lot_var = ctk.StringVar(value="Выберите лот для продажи")
+        ctk.CTkLabel(
+            self.sale_panel, textvariable=self.selected_lot_var,
+            text_color=self.TEXT, font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(10, 7))
+        self.sale_price_entry = ctk.CTkEntry(
+            self.sale_panel, height=36, placeholder_text="Сумма продажи, ₽",
+            fg_color=self.CARD, border_color=self.BORDER, state="disabled",
+        )
+        self.sale_price_entry.grid(row=1, column=0, sticky="ew", padx=(12, 6), pady=(0, 11))
+        self.sale_price_entry.bind("<Return>", lambda _event: self.sell_selected_lot())
+        self.sell_button = ctk.CTkButton(
+            self.sale_panel, text="Продать", width=100, height=36,
+            fg_color=self.PROFIT, hover_color="#24b879", text_color="#06120d",
+            state="disabled", command=self.sell_selected_lot,
+        )
+        self.sell_button.grid(row=1, column=1, padx=(6, 12), pady=(0, 11))
+
+    def _build_sales_log(self, card):
+        """Создаёт журнал завершённых сделок."""
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(11, 7))
+        ctk.CTkLabel(
+            header, text="Логи продаж", text_color=self.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkButton(
+            header, text="Удалить продажу", width=135, height=31,
+            fg_color="transparent", hover_color="#3a2024",
+            border_width=1, border_color=self.BORDER, text_color=self.MUTED,
+            command=self.delete_selected_sale,
+        ).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            header, text="Очистить все логи", width=135, height=31,
+            fg_color="transparent", hover_color="#3a2024",
+            border_width=1, border_color=self.BORDER, text_color=self.MUTED,
+            command=self.clear_history,
+        ).pack(side="right")
+        columns = ("time", "item", "purchase", "sale", "profit", "roi")
+        self.history_table = ttk.Treeview(
+            card, columns=columns, show="headings", style="History.Treeview", height=6
+        )
+        headings = {
+            "time": "Дата", "item": "Предмет", "purchase": "Покупка",
+            "sale": "Продажа", "profit": "Чистая прибыль", "roi": "ROI",
+        }
+        widths = {
+            "time": 125, "item": 220, "purchase": 120,
+            "sale": 120, "profit": 135, "roi": 85,
+        }
+        for column in columns:
+            self.history_table.heading(column, text=headings[column])
+            self.history_table.column(
+                column, width=widths[column], anchor="w" if column == "item" else "center"
+            )
+        self.history_table.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 14))
+
+    def _build_settings_view(self, parent):
+        """Создаёт раздел общих настроек калькулятора."""
+        view = ctk.CTkFrame(parent, fg_color="transparent")
+        view.grid_columnconfigure(0, weight=1)
+        view.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(view, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(24, 18))
+        ctk.CTkLabel(
             header,
-            text="Мониторинг рынка  ↗",
+            text="Настройки",
+            text_color=self.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=30, weight="bold"),
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            header,
+            text="Общие параметры, используемые при расчёте сделок",
+            text_color=self.MUTED,
+            font=("Segoe UI", 13),
+        ).pack(anchor="w", pady=(3, 0))
+
+        area = ctk.CTkFrame(view, fg_color="transparent")
+        area.grid(row=1, column=0, sticky="nsew", padx=28, pady=(0, 28))
+        area.grid_columnconfigure(0, weight=1)
+        card = self._shadow_card(area, 0, 0, sticky="new")
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card,
+            text="Комиссия с продажи",
+            text_color=self.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=22, pady=(20, 4))
+        ctk.CTkLabel(
+            card,
+            text="Процент рассчитывается от цены продажи и включается в общие расходы.",
+            text_color=self.MUTED,
+            font=("Segoe UI", 11),
+        ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 16))
+
+        input_row = ctk.CTkFrame(card, fg_color="transparent")
+        input_row.grid(row=2, column=0, sticky="ew", padx=22, pady=(0, 12))
+        self.settings_commission_entry = ctk.CTkEntry(
+            input_row,
             width=180,
+            height=40,
+            fg_color=self.CARD_ALT,
+            border_color=self.BORDER,
+            placeholder_text="0",
+        )
+        self.settings_commission_entry.pack(side="left")
+        self.settings_commission_entry.insert(
+            0, self._plain_number(self.default_commission)
+        )
+        ctk.CTkLabel(
+            input_row, text="%", text_color=self.MUTED, font=("Segoe UI", 14)
+        ).pack(side="left", padx=(8, 18))
+        ctk.CTkButton(
+            input_row,
+            text="Сохранить",
+            width=125,
             height=40,
             fg_color=self.ACCENT,
             hover_color=self.ACCENT_HOVER,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            command=self.open_price_monitor,
-        ).grid(row=0, column=1, sticky="e", padx=(20, 0))
+            command=self.save_settings,
+        ).pack(side="left")
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 24))
-        content.grid_columnconfigure(0, weight=7, uniform="main")
-        content.grid_columnconfigure(1, weight=4, uniform="main")
-        content.grid_rowconfigure(0, weight=1)
+        self.settings_status_var = ctk.StringVar(value="")
+        ctk.CTkLabel(
+            card,
+            textvariable=self.settings_status_var,
+            text_color=self.PROFIT,
+            font=("Segoe UI", 11),
+        ).grid(row=3, column=0, sticky="w", padx=22, pady=(0, 20))
+        return view
 
-        workspace = ctk.CTkFrame(content, fg_color="transparent")
-        workspace.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        workspace.grid_columnconfigure(0, weight=1)
-        workspace.grid_rowconfigure(0, weight=4)
-        workspace.grid_rowconfigure(1, weight=2)
+    def _load_settings(self):
+        try:
+            with open(self.settings_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return {}
 
-        input_card = self._shadow_card(
-            workspace, 0, 0, sticky="nsew", pady=(0, 8)
-        )
-        result_card = self._shadow_card(
-            workspace, 1, 0, sticky="nsew", pady=(8, 0)
-        )
-        self._build_input_card(input_card)
-        self._build_result_card(result_card)
+    def save_settings(self):
+        """Проверяет и сохраняет комиссию, затем применяет её к форме сделки."""
+        try:
+            commission = self._parse_number(self.settings_commission_entry.get())
+            if commission > 100:
+                raise ValueError
+        except ValueError:
+            self.settings_commission_entry.configure(
+                border_color=self.ERROR, border_width=2
+            )
+            messagebox.showerror(
+                "Ошибка ввода",
+                "Комиссия должна быть числом от 0 до 100.",
+                parent=self,
+            )
+            return
 
-        history_card = self._shadow_card(
-            content, 0, 1, sticky="nsew", padx=(8, 0)
-        )
-        self._build_history_card(history_card)
+        self.default_commission = commission
+        self.settings["commission"] = commission
+        try:
+            with open(self.settings_path, "w", encoding="utf-8") as file:
+                json.dump(self.settings, file, ensure_ascii=False, indent=2)
+        except OSError as error:
+            messagebox.showerror(
+                "Настройки не сохранены", f"Не удалось сохранить настройки:\n{error}",
+                parent=self,
+            )
+            return
+
+        self.settings_commission_entry.configure(border_color=self.BORDER, border_width=2)
+        self.settings_status_var.set("Комиссия сохранена и будет применена при продаже лота")
+
+    @staticmethod
+    def _plain_number(value):
+        number = float(value)
+        return str(int(number)) if number.is_integer() else str(number).replace(".", ",")
 
     def _build_input_card(self, card):
         card.grid_columnconfigure(0, weight=1)
@@ -221,7 +586,8 @@ class App(ctk.CTk):
                 padx=(16 if column == 0 else 8, 16), pady=(0, 6),
             )
             if default:
-                entry.insert(0, default)
+                value = self.default_commission if key == "commission" else default
+                entry.insert(0, self._plain_number(value))
             entry.bind("<Return>", lambda _event: self.calculate())
             entry.bind("<KeyRelease>", lambda _event, item=entry: self._reset_entry(item))
             self.entries[key] = entry
@@ -352,11 +718,183 @@ class App(ctk.CTk):
             variable.set("—")
 
     def open_price_monitor(self):
-        """Открывает отдельное окно мониторинга цен."""
-        if hasattr(self, "monitor_window") and self.monitor_window.winfo_exists():
-            self.monitor_window.focus()
+        """Переключает интерфейс на встроенный прайс-лист."""
+        self.show_view("prices")
+
+    def add_lot(self):
+        """Добавляет купленный предмет в список активных лотов."""
+        name = self.lot_name_entry.get().strip()
+        try:
+            purchase = self._parse_number(self.lot_purchase_entry.get())
+        except ValueError:
+            self.lot_purchase_entry.configure(border_color=self.ERROR, border_width=2)
+            messagebox.showerror(
+                "Ошибка ввода", "Сумма покупки должна быть числом не меньше нуля.", parent=self
+            )
             return
-        self.monitor_window = PriceMonitorWindow(self)
+        if not name:
+            self.lot_name_entry.configure(border_color=self.ERROR, border_width=2)
+            messagebox.showerror("Нет названия", "Введите название предмета.", parent=self)
+            return
+
+        lot = {
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "name": name,
+            "purchase": purchase,
+            "direct_sale": bool(self.direct_sale_var.get()),
+            "created_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        }
+        self.active_lots.insert(0, lot)
+        self._save_lots()
+        self.lot_name_entry.delete(0, "end")
+        self.lot_purchase_entry.delete(0, "end")
+        self.direct_sale_var.set(False)
+        self.lot_name_entry.configure(border_color=self.BORDER)
+        self.lot_purchase_entry.configure(border_color=self.BORDER)
+        self._refresh_active_lots()
+        self.select_lot(lot["id"])
+
+    def select_lot(self, lot_id):
+        """Выбирает лот и открывает ввод цены продажи."""
+        lot = next((item for item in self.active_lots if item.get("id") == lot_id), None)
+        if not lot:
+            return
+        self.selected_lot_id = lot_id
+        sale_mode = "  ·  без комиссии" if lot.get("direct_sale", False) else ""
+        self.selected_lot_var.set(
+            f'{lot.get("name", "Предмет")}  ·  куплено за '
+            f'{self._format_money(float(lot["purchase"]))}{sale_mode}'
+        )
+        self.sale_price_entry.configure(state="normal", border_color=self.BORDER)
+        self.sell_button.configure(state="normal")
+        self.sale_price_entry.delete(0, "end")
+        self.sale_price_entry.focus_set()
+        self._refresh_active_lots()
+
+    def delete_lot(self, lot_id):
+        """Удаляет непроданный лот после подтверждения."""
+        lot = next((item for item in self.active_lots if item.get("id") == lot_id), None)
+        if not lot:
+            return
+        if not messagebox.askyesno(
+            "Удаление лота", f'Удалить «{lot.get("name", "Предмет")}»?', parent=self
+        ):
+            return
+        self.active_lots = [item for item in self.active_lots if item.get("id") != lot_id]
+        if self.selected_lot_id == lot_id:
+            self._clear_lot_selection()
+        self._save_lots()
+        self._refresh_active_lots()
+
+    def sell_selected_lot(self):
+        """Закрывает выбранный лот и рассчитывает результат продажи."""
+        lot = next(
+            (item for item in self.active_lots if item.get("id") == self.selected_lot_id),
+            None,
+        )
+        if not lot:
+            return
+        try:
+            sale = self._parse_number(self.sale_price_entry.get())
+        except ValueError:
+            self.sale_price_entry.configure(border_color=self.ERROR, border_width=2)
+            messagebox.showerror(
+                "Ошибка ввода", "Сумма продажи должна быть числом не меньше нуля.", parent=self
+            )
+            return
+
+        purchase = float(lot["purchase"])
+        commission_percent = 0 if lot.get("direct_sale", False) else self.default_commission
+        commission_rub = sale * commission_percent / 100
+        expenses = purchase + commission_rub
+        profit = sale - expenses
+        roi = profit / expenses * 100 if expenses else 0
+        margin = profit / sale * 100 if sale else 0
+        record = {
+            "time": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "item_name": lot.get("name", "Без названия"),
+            "purchase": purchase,
+            "sale": sale,
+            "commission_percent": commission_percent,
+            "commission_rub": commission_rub,
+            "expenses": expenses,
+            "profit": profit,
+            "margin": margin,
+            "roi": roi,
+        }
+        self.history.insert(0, record)
+        self.history = self.history[: self.HISTORY_LIMIT]
+        self.active_lots = [
+            item for item in self.active_lots if item.get("id") != self.selected_lot_id
+        ]
+        self._save_history()
+        self._save_lots()
+        self._clear_lot_selection()
+        self._refresh_active_lots()
+        self._refresh_history_table()
+        self._update_dashboard_totals()
+
+    def _clear_lot_selection(self):
+        self.selected_lot_id = None
+        self.selected_lot_var.set("Выберите лот для продажи")
+        self.sale_price_entry.configure(state="normal")
+        self.sale_price_entry.delete(0, "end")
+        self.sale_price_entry.configure(state="disabled", border_color=self.BORDER)
+        self.sell_button.configure(state="disabled")
+
+    def _refresh_active_lots(self):
+        """Перерисовывает карточки активных лотов."""
+        for widget in self.active_lots_frame.winfo_children():
+            widget.destroy()
+        self.lots_count_var.set(f"{len(self.active_lots)} шт.")
+        if not self.active_lots:
+            ctk.CTkLabel(
+                self.active_lots_frame,
+                text="Нет активных лотов\nДобавьте первый предмет слева",
+                justify="center", text_color=self.MUTED, font=("Segoe UI", 12),
+            ).grid(row=0, column=0, sticky="ew", pady=28)
+            return
+
+        for row, lot in enumerate(self.active_lots):
+            selected = lot.get("id") == self.selected_lot_id
+            item = ctk.CTkFrame(
+                self.active_lots_frame,
+                fg_color="#18202b" if selected else self.CARD_ALT,
+                corner_radius=8, border_width=1,
+                border_color=self.ACCENT if selected else self.BORDER,
+            )
+            item.grid(row=row, column=0, sticky="ew", padx=3, pady=4)
+            item.grid_columnconfigure(0, weight=1)
+            ctk.CTkButton(
+                item,
+                text="{}{}\nКуплено: {}".format(
+                    lot.get("name", "Предмет"),
+                    "  ·  без комиссии" if lot.get("direct_sale", False) else "",
+                    self._format_money(float(lot.get("purchase", 0))),
+                ),
+                anchor="w", height=54, fg_color="transparent",
+                hover_color="#1c2633", text_color=self.TEXT,
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                command=lambda lot_id=lot.get("id"): self.select_lot(lot_id),
+            ).grid(row=0, column=0, sticky="ew", padx=(4, 0), pady=3)
+            ctk.CTkButton(
+                item, text="×", width=34, height=34,
+                fg_color="transparent", hover_color="#3a2024", text_color=self.MUTED,
+                command=lambda lot_id=lot.get("id"): self.delete_lot(lot_id),
+            ).grid(row=0, column=1, padx=7)
+
+    def _update_dashboard_totals(self):
+        """Пересчитывает сводные показатели по завершённым сделкам."""
+        profit = sum(float(item.get("profit", 0)) for item in self.history)
+        turnover = sum(float(item.get("sale", 0)) for item in self.history)
+        expenses = sum(
+            float(item.get("expenses", float(item.get("sale", 0)) - float(item.get("profit", 0))))
+            for item in self.history
+        )
+        roi = profit / expenses * 100 if expenses else 0
+        self.dashboard_vars["profit"].set(self._format_money(profit))
+        self.dashboard_vars["turnover"].set(self._format_money(turnover))
+        self.dashboard_vars["roi"].set(f"{roi:,.2f} %".replace(",", " "))
 
     def calculate(self):
         """Проверяет ввод, выполняет расчёт и сохраняет результат."""
@@ -425,6 +963,25 @@ class App(ctk.CTk):
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return []
 
+    def _load_lots(self):
+        """Загружает непроданные лоты из локального файла."""
+        try:
+            with open(self.lots_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data if isinstance(data, list) else []
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return []
+
+    def _save_lots(self):
+        try:
+            with open(self.lots_path, "w", encoding="utf-8") as file:
+                json.dump(self.active_lots, file, ensure_ascii=False, indent=2)
+        except OSError as error:
+            messagebox.showwarning(
+                "Лоты не сохранены", f"Не удалось сохранить активные лоты:\n{error}",
+                parent=self,
+            )
+
     def _save_history(self):
         try:
             with open(self.history_path, "w", encoding="utf-8") as file:
@@ -466,24 +1023,47 @@ class App(ctk.CTk):
     def _refresh_history_table(self):
         for item in self.history_table.get_children():
             self.history_table.delete(item)
-        for record in self.history:
+        for index, record in enumerate(self.history):
             try:
                 self.history_table.insert(
                     "",
                     "end",
+                    iid=str(index),
                     values=(
                         record["time"],
-                        "{}  ·  {} → {}".format(
-                            record.get("item_name", "Сделка"),
-                            self._format_money(float(record["purchase"])),
-                            self._format_money(float(record["sale"])),
-                        ),
+                        record.get("item_name", "Сделка"),
+                        self._format_money(float(record["purchase"])),
+                        self._format_money(float(record["sale"])),
                         self._format_money(float(record["profit"])),
                         f'{float(record["roi"]):,.2f} %'.replace(",", " "),
                     ),
                 )
             except (KeyError, TypeError, ValueError):
                 continue
+
+    def delete_selected_sale(self):
+        """Удаляет выбранную завершённую сделку из журнала."""
+        selection = self.history_table.selection()
+        if not selection:
+            messagebox.showinfo(
+                "Удаление продажи", "Сначала выберите продажу в таблице.", parent=self
+            )
+            return
+        try:
+            index = int(selection[0])
+            record = self.history[index]
+        except (ValueError, IndexError):
+            return
+        if not messagebox.askyesno(
+            "Удаление продажи",
+            f'Удалить продажу «{record.get("item_name", "Без названия")}»?',
+            parent=self,
+        ):
+            return
+        self.history.pop(index)
+        self._save_history()
+        self._refresh_history_table()
+        self._update_dashboard_totals()
 
     def clear_history(self):
         """Очищает историю после подтверждения пользователя."""
@@ -495,24 +1075,429 @@ class App(ctk.CTk):
             self.history = []
             self._save_history()
             self._refresh_history_table()
+            self._update_dashboard_totals()
 
 
-class PriceMonitorWindow(ctk.CTkToplevel):
-    """Окно получения и просмотра статистики цен маркетплейса."""
+class RentalFrame(ctk.CTkFrame):
+    """Раздел учёта автопарка, доходов и расходов от аренды."""
 
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
+    LISTING_DAY_COST = 500
+
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=app.BG, corner_radius=0)
+        self.app = app
+        self.data_path = os.path.join(APP_DIR, "rental_data.json")
+        self.data = self._load_data()
+        self.selected_days = 1
+        self.rate_unit = "day"
+        self.selected_car_id = None
+        self.income_var = ctk.StringVar(value="0 ₽")
+        self.expense_var = ctk.StringVar(value="0 ₽")
+        self.deals_var = ctk.StringVar(value="0")
+        self.listing_total_var = ctk.StringVar(value="500 ₽")
+        self._build_interface()
+        self._refresh_all()
+
+    def _build_interface(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        page = ctk.CTkScrollableFrame(
+            self, fg_color="transparent", corner_radius=0,
+            scrollbar_button_color=self.app.BORDER,
+            scrollbar_button_hover_color=self.app.ACCENT,
+        )
+        page.grid(row=0, column=0, sticky="nsew")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(2, minsize=340)
+        page.grid_rowconfigure(3, minsize=260)
+
+        ctk.CTkLabel(
+            page, text="Аренда авто", text_color=self.app.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=30, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 14))
+
+        stats = self.app._shadow_card(page, 1, 0, sticky="ew", padx=24, pady=(0, 8))
+        for column in range(3):
+            stats.grid_columnconfigure(column, weight=1, uniform="rental_stats")
+        for column, (label, variable, color) in enumerate((
+            ("ЧИСТЫЙ ДОХОД", self.income_var, self.app.PROFIT),
+            ("РАСХОД", self.expense_var, self.app.ERROR),
+            ("СДЕЛКИ", self.deals_var, self.app.TEXT),
+        )):
+            box = ctk.CTkFrame(stats, fg_color="transparent")
+            box.grid(row=0, column=column, sticky="ew", padx=20, pady=14)
+            ctk.CTkLabel(
+                box, text=label, text_color=self.app.MUTED,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                box, textvariable=variable, text_color=color,
+                font=ctk.CTkFont(family="Segoe UI", size=23, weight="bold"),
+            ).pack(anchor="w", pady=(2, 0))
+
+        body = ctk.CTkFrame(page, fg_color="transparent")
+        body.grid(row=2, column=0, sticky="nsew", padx=24, pady=8)
+        body.grid_columnconfigure(0, weight=1, uniform="rental_body")
+        body.grid_columnconfigure(1, weight=1, uniform="rental_body")
+        body.grid_rowconfigure(0, weight=1)
+        left = self.app._shadow_card(body, 0, 0, sticky="nsew", padx=(0, 8))
+        right = self.app._shadow_card(body, 0, 1, sticky="nsew", padx=(8, 0))
+        self._build_car_form(left)
+        self._build_fleet(right)
+
+        logs = self.app._shadow_card(page, 3, 0, sticky="nsew", padx=24, pady=(8, 24))
+        self._build_rental_logs(logs)
+
+    def _build_car_form(self, card):
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="Добавление авто", text_color=self.app.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(17, 10))
+
+        mode_row = ctk.CTkFrame(card, fg_color="transparent")
+        mode_row.grid(row=1, column=0, sticky="w", padx=20, pady=(0, 7))
+        self.rate_unit_buttons = {}
+        for unit, label in (("hour", "По часам"), ("day", "Посуточно")):
+            button = ctk.CTkButton(
+                mode_row, text=label, width=105, height=32,
+                fg_color="transparent", hover_color=self.app.CARD_ALT,
+                border_width=1, border_color=self.app.BORDER,
+                command=lambda value=unit: self._select_rate_unit(value),
+            )
+            button.pack(side="left", padx=(0, 7))
+            self.rate_unit_buttons[unit] = button
+        self.car_name_entry = ctk.CTkEntry(
+            card, height=38, placeholder_text="Название автомобиля",
+            fg_color=self.app.CARD_ALT, border_color=self.app.BORDER,
+        )
+        self.car_name_entry.grid(row=2, column=0, sticky="ew", padx=20, pady=4)
+        self.car_rate_entry = ctk.CTkEntry(
+            card, height=38, placeholder_text="Стоимость аренды за сутки, ₽",
+            fg_color=self.app.CARD_ALT, border_color=self.app.BORDER,
+        )
+        self.car_rate_entry.grid(row=3, column=0, sticky="ew", padx=20, pady=4)
+        ctk.CTkLabel(
+            card, text="Срок подачи объявления, дней", text_color=self.app.MUTED,
+            font=("Segoe UI", 11),
+        ).grid(row=4, column=0, sticky="w", padx=20, pady=(11, 5))
+        days_row = ctk.CTkFrame(card, fg_color="transparent")
+        days_row.grid(row=5, column=0, sticky="w", padx=20)
+        self.day_buttons = {}
+        for day in range(1, 8):
+            button = ctk.CTkButton(
+                days_row, text=str(day), width=38, height=34,
+                fg_color="transparent", hover_color=self.app.CARD_ALT,
+                border_width=1, border_color=self.app.BORDER,
+                command=lambda value=day: self._select_days(value),
+            )
+            button.pack(side="left", padx=(0, 6))
+            self.day_buttons[day] = button
+        self._select_days(1)
+        ctk.CTkLabel(
+            card, text="Стоимость объявления", text_color=self.app.MUTED,
+            font=("Segoe UI", 10),
+        ).grid(row=6, column=0, sticky="w", padx=20, pady=(12, 0))
+        self.listing_cost_entry = ctk.CTkEntry(
+            card, height=38, fg_color=self.app.CARD_ALT,
+            border_color=self.app.BORDER, placeholder_text="Стоимость публикации, ₽",
+        )
+        self.listing_cost_entry.grid(row=7, column=0, sticky="ew", padx=20, pady=(3, 8))
+        self.listing_cost_entry.insert(0, str(self.LISTING_DAY_COST))
+        ctk.CTkButton(
+            card, text="Добавить в автопарк", height=38,
+            fg_color=self.app.ACCENT, hover_color=self.app.ACCENT_HOVER,
+            command=self.add_car,
+        ).grid(row=8, column=0, sticky="ew", padx=20, pady=(4, 16))
+        self._select_rate_unit("day")
+
+    def _build_fleet(self, card):
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            card, text="Автопарк", text_color=self.app.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=18, pady=(15, 7))
+        self.fleet_frame = ctk.CTkScrollableFrame(
+            card, fg_color="transparent", scrollbar_button_color=self.app.BORDER,
+            scrollbar_button_hover_color=self.app.ACCENT,
+        )
+        self.fleet_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 10))
+        self.fleet_frame.grid_columnconfigure(0, weight=1)
+
+    def _build_rental_logs(self, card):
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 6))
+        ctk.CTkLabel(
+            header, text="Логи аренды", text_color=self.app.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkButton(
+            header, text="Очистить логи", width=110, height=29,
+            fg_color="transparent", hover_color="#3a2024",
+            border_width=1, border_color=self.app.BORDER,
+            command=self.clear_logs,
+        ).pack(side="right")
+        columns = ("date", "car", "days", "amount")
+        self.log_table = ttk.Treeview(
+            card, columns=columns, show="headings", style="History.Treeview", height=5
+        )
+        for column, label, width in (
+            ("date", "Дата", 150), ("car", "Автомобиль", 420),
+            ("days", "Срок аренды", 130), ("amount", "Доход", 160),
+        ):
+            self.log_table.heading(column, text=label)
+            self.log_table.column(
+                column, width=width, anchor="w" if column == "car" else "center"
+            )
+        self.log_table.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 12))
+
+    def _select_rate_unit(self, unit):
+        """Переключает почасовой и посуточный тариф."""
+        self.rate_unit = unit
+        if hasattr(self, "car_rate_entry"):
+            placeholder = (
+                "Стоимость аренды за час, ₽"
+                if unit == "hour"
+                else "Стоимость аренды за сутки, ₽"
+            )
+            self.car_rate_entry.configure(placeholder_text=placeholder)
+        for value, button in self.rate_unit_buttons.items():
+            button.configure(
+                fg_color=self.app.TEXT if value == unit else "transparent",
+                text_color=self.app.BG if value == unit else self.app.TEXT,
+            )
+
+    def _select_days(self, days):
+        self.selected_days = days
+        self.listing_total_var.set(self.app._format_money(days * self.LISTING_DAY_COST))
+        if hasattr(self, "listing_cost_entry"):
+            self.listing_cost_entry.delete(0, "end")
+            self.listing_cost_entry.insert(0, str(days * self.LISTING_DAY_COST))
+        for value, button in self.day_buttons.items():
+            button.configure(
+                fg_color=self.app.TEXT if value == days else "transparent",
+                text_color=self.app.BG if value == days else self.app.TEXT,
+            )
+
+    def add_car(self):
+        name = self.car_name_entry.get().strip()
+        try:
+            rate = self.app._parse_number(self.car_rate_entry.get())
+            listing_cost = self.app._parse_number(self.listing_cost_entry.get())
+        except ValueError:
+            messagebox.showerror(
+                "Ошибка", "Введите корректную стоимость аренды и публикации.", parent=self
+            )
+            return
+        if not name:
+            messagebox.showerror("Ошибка", "Введите название автомобиля.", parent=self)
+            return
+        car = {
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "name": name, "daily_rate": rate, "rate_unit": self.rate_unit,
+            "listing_days": self.selected_days,
+        }
+        self.data["cars"].insert(0, car)
+        self.data["listing_expenses"] = float(self.data.get("listing_expenses", 0)) + listing_cost
+        self.car_name_entry.delete(0, "end")
+        self.car_rate_entry.delete(0, "end")
+        self._save_data()
+        self._refresh_all()
+
+    def remove_car(self, car_id):
+        car = next((item for item in self.data["cars"] if item.get("id") == car_id), None)
+        if not car or not messagebox.askyesno(
+            "Удаление авто", f'Удалить «{car.get("name", "Авто")}» из автопарка?', parent=self
+        ):
+            return
+        self.data["cars"] = [item for item in self.data["cars"] if item.get("id") != car_id]
+        if self.selected_car_id == car_id:
+            self.selected_car_id = None
+        self._save_data()
+        self._refresh_fleet()
+
+    def select_rental_car(self, car_id):
+        """Раскрывает выбранную карточку автомобиля для оформления аренды."""
+        self.selected_car_id = None if self.selected_car_id == car_id else car_id
+        self._refresh_fleet()
+        if self.selected_car_id and hasattr(self, "rental_duration_entry"):
+            self.rental_duration_entry.focus_set()
+
+    def complete_rental(self):
+        """Рассчитывает доход по тарифу и длительности выбранного автомобиля."""
+        car = next(
+            (item for item in self.data["cars"] if item.get("id") == self.selected_car_id),
+            None,
+        )
+        if not car:
+            return
+        try:
+            duration = self.app._parse_number(self.rental_duration_entry.get())
+            if duration <= 0:
+                raise ValueError
+        except ValueError:
+            unit_name = "часов" if car.get("rate_unit", "day") == "hour" else "суток"
+            messagebox.showerror(
+                "Ошибка", f"Количество {unit_name} должно быть числом больше нуля.", parent=self
+            )
+            return
+        rate_unit = car.get("rate_unit", "day")
+        amount = float(car.get("daily_rate", 0)) * duration
+        self.data["logs"].insert(0, {
+            "kind": "rental",
+            "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "car_id": car.get("id"),
+            "car_name": car.get("name", "Авто"),
+            "days": duration,
+            "duration_unit": rate_unit,
+            "amount": amount,
+        })
+        self.selected_car_id = None
+        self._save_data()
+        self._refresh_all()
+
+    def _refresh_all(self):
+        self._refresh_fleet()
+        self._refresh_logs()
+        income = sum(float(item.get("amount", 0)) for item in self.data["logs"])
+        expense = float(self.data.get("listing_expenses", 0))
+        deals = len(self.data["logs"])
+        self.income_var.set(self.app._format_money(income - expense))
+        self.expense_var.set(self.app._format_money(expense))
+        self.deals_var.set(str(deals))
+
+    def _refresh_fleet(self):
+        for widget in self.fleet_frame.winfo_children():
+            widget.destroy()
+        if not self.data["cars"]:
+            ctk.CTkLabel(
+                self.fleet_frame, text="Нет автомобилей", text_color=self.app.MUTED
+            ).grid(row=0, column=0, pady=28)
+            return
+        for row, car in enumerate(self.data["cars"]):
+            selected = car.get("id") == self.selected_car_id
+            item = ctk.CTkFrame(
+                self.fleet_frame,
+                fg_color="#18202b" if selected else self.app.CARD_ALT,
+                border_width=1,
+                border_color=self.app.ACCENT if selected else self.app.BORDER,
+                corner_radius=8,
+            )
+            item.grid(row=row, column=0, sticky="ew", padx=3, pady=4)
+            item.grid_columnconfigure(0, weight=1)
+            ctk.CTkButton(
+                item,
+                text="{}\n{} / {}  ·  объявление {} дн.".format(
+                    car.get("name", "Авто"),
+                    self.app._format_money(float(car.get("daily_rate", 0))),
+                    "час" if car.get("rate_unit", "day") == "hour" else "сутки",
+                    car.get("listing_days", 1),
+                ),
+                anchor="w", height=58, fg_color="transparent",
+                hover_color="#1c2633", text_color=self.app.TEXT,
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                command=lambda car_id=car.get("id"): self.select_rental_car(car_id),
+            ).grid(row=0, column=0, sticky="ew", padx=(4, 0), pady=3)
+            ctk.CTkLabel(
+                item, text="Свободен", text_color=self.app.PROFIT,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            ).grid(row=0, column=1, padx=6)
+            ctk.CTkButton(
+                item, text="×", width=32, height=32, fg_color="transparent",
+                hover_color="#3a2024", text_color=self.app.MUTED,
+                command=lambda car_id=car.get("id"): self.remove_car(car_id),
+            ).grid(row=0, column=2, padx=(2, 8))
+            if selected:
+                unit_text = "часов" if car.get("rate_unit", "day") == "hour" else "суток"
+                self.rental_duration_entry = ctk.CTkEntry(
+                    item, height=36, placeholder_text=f"Количество {unit_text}",
+                    fg_color=self.app.CARD, border_color=self.app.BORDER,
+                )
+                self.rental_duration_entry.grid(
+                    row=1, column=0, columnspan=2, sticky="ew",
+                    padx=(12, 6), pady=(0, 11),
+                )
+                self.rental_duration_entry.bind(
+                    "<Return>", lambda _event: self.complete_rental()
+                )
+                ctk.CTkButton(
+                    item, text="Сдать", width=85, height=36,
+                    fg_color=self.app.TEXT, hover_color="#d6d9de",
+                    text_color=self.app.BG, command=self.complete_rental,
+                ).grid(row=1, column=2, padx=(6, 8), pady=(0, 11))
+
+    def _refresh_logs(self):
+        for row in self.log_table.get_children():
+            self.log_table.delete(row)
+        for log in self.data["logs"]:
+            amount = float(log.get("amount", 0))
+            duration_suffix = "ч." if log.get("duration_unit") == "hour" else "сут."
+            self.log_table.insert("", "end", values=(
+                log.get("date", "—"), log.get("car_name", "Автомобиль"),
+                f'{self.app._plain_number(log.get("days", 0))} {duration_suffix}',
+                self.app._format_money(amount),
+            ))
+
+    def clear_logs(self):
+        if self.data["logs"] and messagebox.askyesno(
+            "Очистка логов", "Удалить все логи аренды?", parent=self
+        ):
+            self.data["logs"] = []
+            self._save_data()
+            self._refresh_all()
+
+    def _load_data(self):
+        try:
+            with open(self.data_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            if isinstance(data, dict):
+                data.setdefault("cars", [])
+                data.setdefault("logs", [])
+                if data.get("schema_version", 1) < 2:
+                    # Старые ручные операции удаляются: журнал теперь только об аренде.
+                    old_expenses = -sum(
+                        float(item.get("amount", 0))
+                        for item in data["logs"]
+                        if float(item.get("amount", 0)) < 0
+                    )
+                    data["listing_expenses"] = old_expenses
+                    data["logs"] = []
+                    data["schema_version"] = 2
+                    try:
+                        with open(self.data_path, "w", encoding="utf-8") as file:
+                            json.dump(data, file, ensure_ascii=False, indent=2)
+                    except OSError:
+                        pass
+                data.setdefault("listing_expenses", 0)
+                return data
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            pass
+        return {"cars": [], "logs": [], "listing_expenses": 0, "schema_version": 2}
+
+    def _save_data(self):
+        try:
+            with open(self.data_path, "w", encoding="utf-8") as file:
+                json.dump(self.data, file, ensure_ascii=False, indent=2)
+        except OSError as error:
+            messagebox.showwarning(
+                "Данные не сохранены", f"Не удалось сохранить данные аренды:\n{error}",
+                parent=self,
+            )
+
+
+class PriceMonitorFrame(ctk.CTkFrame):
+    """Встроенный раздел получения и просмотра статистики цен."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=app.BG, corner_radius=0)
+        self.parent = app
         self.items = []
         self.cache_path = os.path.join(APP_DIR, "marketplace_cache.json")
         self.favorites_path = os.path.join(APP_DIR, "marketplace_favorites.json")
         self.favorites = self._load_favorites()
-
-        self.title("Мониторинг цен маркетплейса")
-        self.geometry("1120x720")
-        self.minsize(880, 600)
-        self.configure(fg_color=parent.BG)
-        self.transient(parent)
 
         self.server_var = ctk.StringVar(value="Сервер: —")
         self.updated_var = ctk.StringVar(value="Обновлено: —")
@@ -528,7 +1513,7 @@ class PriceMonitorWindow(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             self,
-            text="Мониторинг цен",
+            text="Прайс-лист",
             text_color=self.parent.TEXT,
             font=ctk.CTkFont(family="Segoe UI", size=26, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=28, pady=(22, 12))

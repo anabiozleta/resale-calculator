@@ -5,6 +5,9 @@ venv/
 calculation_history.json
 marketplace_cache.json
 marketplace_favorites.json
+app_settings.json
+active_lots.json
+rental_data.json
 .idea/
 .vscode/
 build/
@@ -12,3 +15,6 @@ dist/
 *.spec
 release-package/
 *.zip
+*.exe
+installer-output/
+.installer-test/
