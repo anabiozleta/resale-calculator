@@ -7,3 +7,8 @@ marketplace_cache.json
 marketplace_favorites.json
 .idea/
 .vscode/
+build/
+dist/
+*.spec
+release-package/
+*.zip

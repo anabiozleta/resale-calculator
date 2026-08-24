@@ -4,10 +4,19 @@ import customtkinter as ctk
 from tkinter import Menu, TclError, messagebox, ttk
 import json
 import os
+import sys
 import threading
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from datetime import datetime
+
+
+# В обычном запуске данные лежат рядом со скриптом, в собранном EXE — рядом с EXE.
+APP_DIR = (
+    os.path.dirname(os.path.abspath(sys.executable))
+    if getattr(sys, "frozen", False)
+    else os.path.dirname(os.path.abspath(__file__))
+)
 
 
 class App(ctk.CTk):
@@ -41,9 +50,7 @@ class App(ctk.CTk):
         self.configure(fg_color=self.BG)
 
         # История хранится рядом с программой.
-        self.history_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "calculation_history.json"
-        )
+        self.history_path = os.path.join(APP_DIR, "calculation_history.json")
         self.entries = {}
         self.result_vars = {
             "expenses": ctk.StringVar(value="—"),
@@ -448,12 +455,8 @@ class PriceMonitorWindow(ctk.CTkToplevel):
         super().__init__(parent)
         self.parent = parent
         self.items = []
-        self.cache_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "marketplace_cache.json"
-        )
-        self.favorites_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "marketplace_favorites.json"
-        )
+        self.cache_path = os.path.join(APP_DIR, "marketplace_cache.json")
+        self.favorites_path = os.path.join(APP_DIR, "marketplace_favorites.json")
         self.favorites = self._load_favorites()
 
         self.title("Мониторинг цен маркетплейса")
