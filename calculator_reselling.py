@@ -180,9 +180,28 @@ class App(ctk.CTk):
         fields_frame.grid_columnconfigure(0, weight=1, uniform="fields")
         fields_frame.grid_columnconfigure(1, weight=1, uniform="fields")
 
+        ctk.CTkLabel(
+            fields_frame,
+            text="Предмет сделки",
+            text_color=self.TEXT,
+            font=("Segoe UI", 12),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(7, 3))
+        self.item_name_entry = ctk.CTkEntry(
+            fields_frame,
+            height=39,
+            fg_color=self.CARD_ALT,
+            border_color=self.BORDER,
+            text_color=self.TEXT,
+            placeholder_text="Например: ID-карта",
+        )
+        self.item_name_entry.grid(
+            row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 6)
+        )
+        self.item_name_entry.bind("<Return>", lambda _event: self.calculate())
+
         for index, (key, label, default) in enumerate(self.FIELDS):
             column = index % 2
-            field_row = (index // 2) * 2
+            field_row = (index // 2) * 2 + 2
             ctk.CTkLabel(
                 fields_frame, text=label, text_color=self.TEXT, font=("Segoe UI", 12)
             ).grid(
@@ -215,7 +234,7 @@ class App(ctk.CTk):
             hover_color=self.ACCENT_HOVER,
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
             command=self.calculate,
-        ).grid(row=7, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 14))
+        ).grid(row=9, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 14))
 
     def _build_result_card(self, card):
         for column in range(4):
@@ -309,7 +328,7 @@ class App(ctk.CTk):
             "profit": "Прибыль",
             "roi": "ROI",
         }
-        widths = {"time": 110, "deal": 175, "profit": 115, "roi": 70}
+        widths = {"time": 105, "deal": 230, "profit": 105, "roi": 65}
         for column in columns:
             self.history_table.heading(column, text=headings[column])
             self.history_table.column(column, width=widths[column], anchor="center")
@@ -378,6 +397,7 @@ class App(ctk.CTk):
 
         record = {
             "time": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "item_name": self.item_name_entry.get().strip() or "Без названия",
             "purchase": values["purchase"],
             "sale": values["sale"],
             "expenses": expenses,
@@ -453,7 +473,8 @@ class App(ctk.CTk):
                     "end",
                     values=(
                         record["time"],
-                        "{} → {}".format(
+                        "{}  ·  {} → {}".format(
+                            record.get("item_name", "Сделка"),
                             self._format_money(float(record["purchase"])),
                             self._format_money(float(record["sale"])),
                         ),
